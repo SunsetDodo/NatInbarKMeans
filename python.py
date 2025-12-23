@@ -37,13 +37,17 @@ def assign_vectors(matrix, centroids):
 
 
 def recreate_centroids(centroids_assignments_dict):
+	list_of_centroids = []
 	for i in range(k):
-		new_centroid = calculate_muk(centroids_assignments_dict[i][1])
+		new_centroid = calculate_mean_value(centroids_assignments_dict[i][1])
 		centroids_assignments_dict[i][0] = new_centroid
+		list_of_centroids.append(new_centroid)
+	return assign_vectors(matrix, list_of_centroids)
 
 
-def calculate_muk(list_of_vectors):
+def calculate_mean_value(list_of_vectors):
 	vector_sum = calc_vector_sum(list_of_vectors)
+	# print(vector_sum)
 	len_of_list_of_vectors = len(list_of_vectors)
 	normalized_vector = normalize_vector(vector_sum, len_of_list_of_vectors)
 	return normalized_vector
@@ -67,12 +71,12 @@ def initialize_centroids(k, matrix):
 	return matrix[:k]
 
 def distance(vector1, vector2):
-	sum_of_vector = 0
+	sum_of_vector = 0.0
 	for i in range(len(vector1)):
-		sum_of_vector += (vector1[i] - vector2[i])**2
-	return sum_of_vector**(1/2)
+		sum_of_vector += (float(vector1[i]) - float(vector2[i]))**2
+	return float(sum_of_vector**(1/2))
 
-def minimal_distance(previous_centroids: dict, new_centroids: dict):
+def maximal_distance(previous_centroids: dict, new_centroids: dict):
 	maximum = NEGATIVE_START_VALUE
 	for i in range(k):
 		temp_distance = distance(previous_centroids[i], new_centroids[i][0])
@@ -81,29 +85,30 @@ def minimal_distance(previous_centroids: dict, new_centroids: dict):
 	return maximum
 
 
-def Kmins(k, iters, matrix):
-	iterations = 0;
+def kmeans(k: int, iters: int, matrix: list[list]):
+	iterations = 0
 	centroids = initialize_centroids(k, matrix)
 	centroids_assignments_dict = assign_vectors(matrix, centroids)
 	while(True):
-		list_of_previous_centroids = {centroid: centroids_assignments_dict[centroid][0] for centroid in centroids_assignments_dict.keys()}
-		recreate_centroids(centroids_assignments_dict)
-		if(minimal_distance(list_of_previous_centroids, centroids_assignments_dict) < EPSILON):
+		list_of_previous_centroids = {centroid_index: centroids_assignments_dict[centroid_index][0] for centroid_index in centroids_assignments_dict.keys()}
+		centroids_assignments_dict = recreate_centroids(centroids_assignments_dict)
+		print("maximal distance: ", maximal_distance(list_of_previous_centroids, centroids_assignments_dict))
+		if(abs(maximal_distance(list_of_previous_centroids, centroids_assignments_dict)) < EPSILON):
 			break
-		if(iterations > iters):
+		if(iterations >= iters):
 			break
 		iterations += 1
+	print(iterations)
 	return [centroids_assignments_dict[centroid_index][0] for centroid_index in centroids_assignments_dict.keys()]
 
 
 if __name__ == "__main__":
+	k = int(sys.argv[1])
+	iters = 400
 	if len(sys.argv) == 3:
-		k = int(sys.argv[1])
-		iters =  int(sys.argv[2])
-		data = sys.stdin.read()
-		matrix = parse_file(data)
-		centroid_list = Kmins(k, iters, matrix)
-		for centroid in centroid_list:
-			print(centroid)
-	else:
-		print("usage, the input should be in the format: <number> <number> > <file_path>")
+		iters = int(sys.argv[2])
+	data = sys.stdin.read()
+	matrix = parse_file(data)
+	centroid_list = kmeans(k, iters, matrix)
+	for centroid in centroid_list:
+		print(centroid)
