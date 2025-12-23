@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 
 const int INITIAL_ROW_CAP = 8;
@@ -136,16 +137,20 @@ double* mean_value(double** vectors, const int vector_count, const int vector_le
 }
 
 void free_centroids(const Centroid* centroids, const int centroid_count) {
+    if (centroids == NULL)
+        return;
+
     for (int i = 0; i < centroid_count; i++) {
-        if (centroids[i] == NULL) {
-            continue;
-        }
         free(centroids[i].center);
         free(centroids[i].assigned_vectors);
     }
 }
 
 double max_iteration_delta(const Centroid* old, const Centroid* new, const int k, const int vector_length) {
+    if (old == NULL || new == NULL) {
+        return INFINITY;
+    }
+
     double max_delta = 0;
     for (int i = 0; i < k; i++) {
         const double d = distance(old[i].center, new[i].center, vector_length);
@@ -155,14 +160,18 @@ double max_iteration_delta(const Centroid* old, const Centroid* new, const int k
 }
 
 void assign_vectors_to_centroids(Centroid* centroids, const int k, const Input input) {
+    if (centroids == NULL || input.matrix == NULL) {
+        return;
+    }
+
     for (int i = 0; i < input.rows; i++) {
         double min_distance = INFINITY;
         Centroid* closest_centroid = NULL;
         for (int j = 0; j < k; j++) {
-            const double distance_to_centroid = distance(input.matrix[i], centroids[j].center, input.cols);
-            min_distance = min_distance > distance_to_centroid ? distance_to_centroid : min_distance;
-            if (distance_to_centroid == min_distance) {
-                closest_centroid = centroids + j;
+            const double dist = distance(input.matrix[i], centroids[j].center, input.cols);
+            if (dist < min_distance) {
+                min_distance = dist;
+                closest_centroid = &centroids[j];
             }
         }
         if (closest_centroid == NULL) {
@@ -182,7 +191,8 @@ void assign_vectors_to_centroids(Centroid* centroids, const int k, const Input i
 Centroid* kmeans(const Input input, const int k, const int max_iterations) {
     Centroid* centroids = malloc(k * sizeof(Centroid));
     for (int i = 0; i < k; i++) {
-        centroids[i].center = input.matrix[i];
+        centroids[i].center = malloc(input.cols * sizeof(double));
+        memcpy(centroids[i].center, input.matrix[i], input.cols * sizeof(double));
         centroids[i].assigned_vectors_count = 0;
     }
     assign_vectors_to_centroids(centroids, k, input);
@@ -192,8 +202,10 @@ Centroid* kmeans(const Input input, const int k, const int max_iterations) {
         centroids = malloc(k * sizeof(Centroid));
         for (int j = 0; j < k; j++) {
             centroids[j].center = mean_value(old_centroids[j].assigned_vectors, old_centroids[j].assigned_vectors_count, input.cols);
-            assign_vectors_to_centroids(centroids, k, input);
+            centroids[j].assigned_vectors_count = 0;
+            centroids[j].assigned_vectors = NULL;
         }
+        assign_vectors_to_centroids(centroids, k, input);
 
         if (max_iteration_delta(old_centroids, centroids, k, input.cols) < EPSILON) {
             free_centroids(old_centroids, k);
@@ -209,13 +221,16 @@ Centroid* kmeans(const Input input, const int k, const int max_iterations) {
 int main(int argc, char** argv) {
     // int k = (int)argv[1];
     // int max_iterations = (int)argv[2];
-    const int k = 3;
-    const int max_iterations = 600;
+    const int k = 7;
+    const int max_iterations = INFINITY;
     const Input d = parse_input();
 
     const Centroid* centroids = kmeans(d, k, max_iterations);
     for (int i = 0; i < k; i++) {
-        printf("%lf,", centroids[i].center[0]);
+        for (int j = 0; j < d.cols; j++) {
+            printf("%lf,", centroids[i].center[j]);
+        }
+        printf("\n");
     }
 
     return 0;
