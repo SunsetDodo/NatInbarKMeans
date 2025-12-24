@@ -1,6 +1,7 @@
 import sys
 
 from dask.dataframe.methods import values
+from sympy import false
 
 EPSILON = 0.001
 ITERATIONS = 400
@@ -86,6 +87,10 @@ def kmeans(k: int, iters: int, matrix: list[Vector]):
     while True:
         list_of_prev_centroids = list_of_centroids.copy()
         list_of_centroids = recreate_centroids(list_of_centroids)
+        empty_centroids = check_for_empty_centroid(list_of_centroids)
+        if len(empty_centroids)!=0:
+            initialize_centroids()
+
         if abs(minimal_distance(list_of_prev_centroids, list_of_centroids)) < EPSILON:
             break
         if iterations >= iters:
@@ -157,6 +162,19 @@ def minimal_distance(previous_centroids: CentroidList, new_centroids: CentroidLi
         if maximum < temp_distance:
             maximum = temp_distance
     return maximum
+
+def check_for_empty_centroid(centroid_list: CentroidList): #need to check
+    list_of_empty_centroids = set()
+    for i in centroid_list.assigned_vectors.keys():
+        if not centroid_list.assigned_vectors[i]:
+            list_of_empty_centroids.add(str(i))
+    return  list_of_empty_centroids
+
+def fix_missing_centroids(cetroid_list: CentroidList, missing_centroids: set[str]): #need to check
+    counter = 0
+    for i in missing_centroids:
+        cetroid_list.centroids[int(i)] = matrix[counter]
+        cetroid_list.centroids[int(i)].centroid_uid = i
 
 
 if __name__ == "__main__":
