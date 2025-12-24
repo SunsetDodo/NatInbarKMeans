@@ -38,20 +38,23 @@ class Centroid(Vector):
         return s
 class CentroidList:
     centroids: list[Centroid] = None
-    assigned_vectors: dict[str: list[Vector]] = []
+    assigned_vectors: dict[str: list[Vector]] = dict()
 
     def __init__(self, list_of_centrids):
         self.centroids = list_of_centrids
 
     def flush(self):
         self.centroids = None
-        self.assigned_vectors = []
+        self.assigned_vectors = dict()
 
     def set_centroids(self, centroids):
         self.centroids =  centroids
 
     def add_vector_assignment(self, vector, uid):
-        self.assigned_vectors[uid].append(vector)
+        if uid in self.assigned_vectors.keys():
+            self.assigned_vectors[uid].append(vector)
+        else:
+            self.assigned_vectors[uid] = [vector]
 
     def copy(self):
         centroids_list = self.centroids.copy()
@@ -80,17 +83,15 @@ def kmeans(k: int, iters: int, matrix: list[Vector]):
     iterations = 0
     list_of_centroids = initialize_centroids(k, matrix)
     assign_vectors(matrix, list_of_centroids)
-    while(True):
+    while True:
         list_of_prev_centroids = list_of_centroids.copy()
         list_of_centroids = recreate_centroids(list_of_centroids)
-        print("maximal distance: ", minimal_distance(list_of_prev_centroids, list_of_centroids))
         if abs(minimal_distance(list_of_prev_centroids, list_of_centroids)) < EPSILON:
             break
         if iterations >= iters:
             break
         iterations += 1
-    print(iterations)
-    return None#[centroids_assignments_dict[centroid_index][0] for centroid_index in centroids_assignments_dict.keys()]
+    return list_of_centroids
 
 def initialize_centroids(k, matrix):
     list_of_centroids = CentroidList([Centroid(matrix[i].values, i) for i in range(k)])
@@ -112,8 +113,6 @@ def assign_vectors(matrix :list[Vector] , centroids: CentroidList):
 
 def distance(vector1: Vector, vector2: Vector):
     sum_of_vector = 0.0
-    print(vector1)
-    print(vector2)
     for i in range(len(vector1.values)):
         sum_of_vector += (float(vector1.values[i]) - float(vector2.values[i]))**2
     return float(sum_of_vector**(1/2))
@@ -131,19 +130,19 @@ def recreate_centroids(list_of_centroids: CentroidList):
 
 def calculate_mean_value(list_of_vectors):
     vector_sum = calc_vector_sum(list_of_vectors)
-    # print(vector_sum)
     len_of_list_of_vectors = len(list_of_vectors)
     normalized_vector = normalize_vector(vector_sum, len_of_list_of_vectors)
     return normalized_vector
 
 def calc_vector_sum(list_of_vectors):
-    sum_vector = [0 for i in range(k)]
-    for i in range(k):
+    vector_len = len(list_of_vectors[0].values) # maybe not that robust
+    sum_vector = [0 for i in range(vector_len)]
+    for i in range(vector_len):
         sum_for_i = 0
         for vector in list_of_vectors:
-            sum_for_i += vector.vaues[i]
+            sum_for_i += vector.values[i]
         sum_vector[i] = sum_for_i
-    return sum_vector
+    return Vector(sum_vector)
 
 def normalize_vector(vector: Vector, scalar):
     new_vector = vector.copy()
@@ -168,5 +167,5 @@ if __name__ == "__main__":
     data = sys.stdin.read()
     matrix = parse_file(data)
     centroid_list = kmeans(k, iters, matrix)
-    # for centroid in centroid_list:
-    # 	print(centroid)
+    for centroid in centroid_list.centroids:
+        print(centroid)
