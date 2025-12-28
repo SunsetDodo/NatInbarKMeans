@@ -1,7 +1,5 @@
 import sys
 
-from dask.dataframe.methods import values
-from sympy import false
 
 EPSILON = 0.001
 ITERATIONS = 400
@@ -18,7 +16,7 @@ class Vector:
     def __repr__(self):
         s = ''
         for value in self.values:
-            s += str(value) + ", "
+            s += str(round(value, 4)) + ", " # to check
         return s
     def copy(self):
         copied_values = self.values.copy()
@@ -32,11 +30,6 @@ class Centroid(Vector):
         self.uid = uid
         self.centroid_uid = uid
 
-    def __repr__(self):
-        s = f'uid: {self.uid}, values: '
-        for value in self.values:
-            s += str(value) + ", "
-        return s
 class CentroidList:
     centroids: list[Centroid] = None
     assigned_vectors: dict[str: list[Vector]] = dict()
@@ -81,21 +74,17 @@ def parse_file(data):
 
 
 def kmeans(k: int, iters: int, matrix: list[Vector]):
-    iterations = 0
     list_of_centroids = initialize_centroids(k, matrix)
     assign_vectors(matrix, list_of_centroids)
-    while True:
+    for i in range(iters):
         list_of_prev_centroids = list_of_centroids.copy()
         list_of_centroids = recreate_centroids(list_of_centroids)
         empty_centroids = check_for_empty_centroid(list_of_centroids)
         if len(empty_centroids)!=0:
-            initialize_centroids()
-
+            pass
+            # initialize_centroids()
         if abs(minimal_distance(list_of_prev_centroids, list_of_centroids)) < EPSILON:
             break
-        if iterations >= iters:
-            break
-        iterations += 1
     return list_of_centroids
 
 def initialize_centroids(k, matrix):
@@ -108,7 +97,7 @@ def assign_vectors(matrix :list[Vector] , centroids: CentroidList):
         min_for_vector = NEGATIVE_START_VALUE
         for centroid in centroids.centroids:
             temp_distance = distance(vector, centroid)
-            if (centroid_assignment < 0) & (min_for_vector < 0):
+            if (centroid_assignment < 0) and (min_for_vector < 0):
                 centroid_assignment = centroid.uid
                 min_for_vector = temp_distance
             elif temp_distance < min_for_vector:
@@ -125,6 +114,7 @@ def distance(vector1: Vector, vector2: Vector):
 def recreate_centroids(list_of_centroids: CentroidList):
     new_list_of_centroids = []
     for i in range(k):
+        # check_for_empty_centroid(list_of_centroids)  ****
         temp_centroid = calculate_mean_value(list_of_centroids.assigned_vectors[i])
         new_centroid = Centroid(temp_centroid.values, i)
         new_list_of_centroids.append(new_centroid)
@@ -133,9 +123,9 @@ def recreate_centroids(list_of_centroids: CentroidList):
     assign_vectors(matrix, list_of_centroids)
     return list_of_centroids
 
-def calculate_mean_value(list_of_vectors):
+def calculate_mean_value(list_of_vectors: list[Vector]):
     vector_sum = calc_vector_sum(list_of_vectors)
-    len_of_list_of_vectors = len(list_of_vectors)
+    len_of_list_of_vectors = len(list_of_vectors) # if empty i
     normalized_vector = normalize_vector(vector_sum, len_of_list_of_vectors)
     return normalized_vector
 
@@ -186,4 +176,4 @@ if __name__ == "__main__":
     matrix = parse_file(data)
     centroid_list = kmeans(k, iters, matrix)
     for centroid in centroid_list.centroids:
-        print(centroid)
+        print(centroid) # change to not print uid
