@@ -1,5 +1,6 @@
 import sys
 
+from typing import List
 
 EPSILON = 0.001
 ITERATIONS = 400
@@ -8,7 +9,6 @@ NEGATIVE_START_VALUE = -1
 
 class Vector:
     values: list[float] = None
-    centroid_uid = None
 
     def __init__(self, values):
         self.values = values
@@ -16,162 +16,157 @@ class Vector:
     def __repr__(self):
         return ','.join(f"{value:.4f}" for value in self.values)
 
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, index):
+        return self.values[index]
+
+    def __add__(self, other):
+        return Vector([self[i] + other[i] for i in range(len(self))])
+
+    def __sub__(self, other):
+        return Vector([self[i] - other[i] for i in range(len(self))])
+
     def copy(self):
-        copied_values = self.values.copy()
-        return Vector(copied_values)
+        return Vector(self.values.copy())
 
-class Centroid(Vector):
-    uid = None
+class Centroid:
+    center: Vector = None
+    vectors: List[Vector] = None
 
-    def __init__(self, values, uid):
-        self.values = values
-        self.uid = uid
-        self.centroid_uid = uid
+    def __init__(self, center: Vector, vectors: List[Vector] = None):
+        self.center = center
 
-class CentroidList:
-    centroids: list[Centroid] = None
-    assigned_vectors: dict[str: list[Vector]] = dict()
-
-    def __init__(self, list_of_centrids):
-        self.centroids = list_of_centrids
-
-    def flush(self):
-        self.centroids = None
-        self.assigned_vectors = dict()
-
-    def set_centroids(self, centroids):
-        self.centroids =  centroids
-
-    def add_vector_assignment(self, vector, uid):
-        if uid in self.assigned_vectors.keys():
-            self.assigned_vectors[uid].append(vector)
+        if vectors is None:
+            self.vectors = []
         else:
-            self.assigned_vectors[uid] = [vector]
-
-    def copy(self):
-        centroids_list = self.centroids.copy()
-        return CentroidList(centroids_list)
+            self.vectors = vectors
 
     def __getitem__(self, item):
-        return self.centroids[item]
+        return self.vectors[item]
+
+    def copy(self):
+        return Centroid(self.center.copy(), [vector.copy() for vector in self.vectors])
+
+    def append(self, vector: Vector):
+        self.vectors.append(vector)
 
 
-def parse_file(data):
+def parse_file(data: str):
     matrix = []
-    temp_row = []
-    lined_data = data.split('\n')
-    lined_data = lined_data[:-1]
-    for row in lined_data: #should chane to any seperator
-        temp_vector = row.split(',')
-        for scalar in temp_vector:
-            temp_row.append(float(scalar))
-        v = Vector(temp_row)
-        matrix.append(v)
-        temp_row = []
+    for row in data.split('\n')[:-1]:
+        matrix.append(Vector([float(val) for val in row.split(',')]))
     return matrix
 
 
 def kmeans(k: int, iters: int, matrix: list[Vector]):
-    list_of_centroids = initialize_centroids(k, matrix)
-    assign_vectors(matrix, list_of_centroids)
+    centroids = initialize_centroids(k, matrix)
+    assign_vectors(centroids, matrix)
+
     for i in range(iters):
-        list_of_prev_centroids = list_of_centroids.copy()
-        list_of_centroids = recreate_centroids(list_of_centroids)
-        empty_centroids = check_for_empty_centroid(list_of_centroids)
-        if len(empty_centroids)!=0:
-            pass
-            # initialize_centroids()
-        if abs(minimal_distance(list_of_prev_centroids, list_of_centroids)) < EPSILON:
+        prev_centroids = centroids
+        centroids = recreate_centroids(centroids)
+        if abs(minimal_distance(prev_centroids, centroids)) < EPSILON:
             break
-    return list_of_centroids
+
+        assign_vectors(centroids, matrix)
+        del prev_centroids
+
+    return centroids
+
 
 def initialize_centroids(k, matrix):
-    list_of_centroids = CentroidList([Centroid(matrix[i].values, i) for i in range(k)])
-    return list_of_centroids
+    return [Centroid(matrix[i]) for i in range(k)]
 
-def assign_vectors(matrix :list[Vector] , centroids: CentroidList):
-    for vector in matrix:
-        centroid_assignment = NEGATIVE_START_VALUE
-        min_for_vector = NEGATIVE_START_VALUE
-        for centroid in centroids.centroids:
-            temp_distance = distance(vector, centroid)
-            if (centroid_assignment < 0) and (min_for_vector < 0):
-                centroid_assignment = centroid.uid
-                min_for_vector = temp_distance
-            elif temp_distance < min_for_vector:
-                centroid_assignment = centroid.uid
-                min_for_vector = temp_distance
-        centroids.add_vector_assignment(vector, centroid_assignment)
+
+def closest_centroid(vector: Vector, centroids: List[Centroid]) -> Centroid:
+    if not centroids:
+        raise RuntimeError("No centroids provided.")
+
+    min_distance = distance(vector, centroids[0].center)
+    closest = centroids[0]
+
+    for centroid in centroids[1:]:
+        distance_to_centroid = distance(vector, centroid.center)
+        if distance_to_centroid < min_distance:
+            min_distance = distance_to_centroid
+            closest = centroid
+
+    return closest
+
+
+def assign_vectors(centroids: List[Centroid], matrix: list[Vector]):
+    first_centroid_assignment = None
+    for i, vector in enumerate(matrix):
+        to_assign = closest_centroid(vector, centroids)
+
+        if i == 0:
+            first_centroid_assignment = to_assign
+            continue
+
+        to_assign.append(vector)
+
+    empty_centroid = check_for_empty_centroid(centroids)
+    if empty_centroid:
+        empty_centroid.append(matrix[0])
+    else:
+        first_centroid_assignment.append(matrix[0])
+
 
 def distance(vector1: Vector, vector2: Vector):
     sum_of_vector = 0.0
-    for i in range(len(vector1.values)):
-        sum_of_vector += (float(vector1.values[i]) - float(vector2.values[i]))**2
-    return float(sum_of_vector**(1/2))
+    for i in range(len(vector1)):
+        sum_of_vector += (vector1.values[i] - vector2.values[i]) ** 2
+    return sum_of_vector ** 0.5
 
-def recreate_centroids(list_of_centroids: CentroidList):
-    new_list_of_centroids = []
-    for i in range(k):
-        # check_for_empty_centroid(list_of_centroids)  ****
-        temp_centroid = calculate_mean_value(list_of_centroids.assigned_vectors[i])
-        new_centroid = Centroid(temp_centroid.values, i)
-        new_list_of_centroids.append(new_centroid)
-    list_of_centroids.flush()
-    list_of_centroids.set_centroids(new_list_of_centroids)
-    assign_vectors(matrix, list_of_centroids)
-    return list_of_centroids
 
-def calculate_mean_value(list_of_vectors: list[Vector]):
-    vector_sum = calc_vector_sum(list_of_vectors)
-    len_of_list_of_vectors = len(list_of_vectors) # if empty i
-    normalized_vector = normalize_vector(vector_sum, len_of_list_of_vectors)
-    return normalized_vector
+def recreate_centroids(centroids: List[Centroid]) -> List[Centroid]:
+    new_centroids = []
+    for centroid in centroids:
+        center = mean_value(centroid.vectors)
+        new_centroids.append(Centroid(center))
 
-def calc_vector_sum(list_of_vectors):
-    vector_len = len(list_of_vectors[0].values) # maybe not that robust
-    sum_vector = [0 for i in range(vector_len)]
+    return new_centroids
+
+def mean_value(vectors: list[Vector]):
+    vector_len = len(vectors[0])
+    sum_vector = [0 for _ in range(vector_len)]
     for i in range(vector_len):
-        sum_for_i = 0
-        for vector in list_of_vectors:
-            sum_for_i += vector.values[i]
-        sum_vector[i] = sum_for_i
+        sum_vector[i] = sum(vectors[j][i] / len(vectors) for j in range(len(vectors)))
     return Vector(sum_vector)
 
-def normalize_vector(vector: Vector, scalar):
-    new_vector = vector.copy()
-    for index in range(len(new_vector.values)):
-        new_vector.values[index] = new_vector.values[index]/ scalar
-    return new_vector
 
-def minimal_distance(previous_centroids: CentroidList, new_centroids: CentroidList):
+def minimal_distance(previous_centroids: List[Centroid], new_centroids: List[Centroid]):
     maximum = NEGATIVE_START_VALUE
-    for i in range(k):
-        temp_distance = distance(previous_centroids[i], new_centroids[i])
-        if maximum < temp_distance:
-            maximum = temp_distance
+
+    for i, prev in enumerate(previous_centroids):
+        new = new_centroids[i]
+        dist = distance(prev.center, new.center)
+        if maximum < dist:
+            maximum = dist
+
     return maximum
 
-def check_for_empty_centroid(centroid_list: CentroidList): #need to check
-    list_of_empty_centroids = set()
-    for i in centroid_list.assigned_vectors.keys():
-        if not centroid_list.assigned_vectors[i]:
-            list_of_empty_centroids.add(str(i))
-    return  list_of_empty_centroids
+def check_for_empty_centroid(centroids: List[Centroid]) -> Centroid or None: #need to check
+    for c in centroids:
+        if len(c.vectors) == 0:
+            return c
 
-def fix_missing_centroids(cetroid_list: CentroidList, missing_centroids: set[str]): #need to check
-    counter = 0
-    for i in missing_centroids:
-        cetroid_list.centroids[int(i)] = matrix[counter]
-        cetroid_list.centroids[int(i)].centroid_uid = i
+    return None
 
 
-if __name__ == "__main__":
+def main():
     k = int(sys.argv[1])
     iters = 400
     if len(sys.argv) == 3:
         iters = int(sys.argv[2])
+
     data = sys.stdin.read()
     matrix = parse_file(data)
-    centroid_list = kmeans(k, iters, matrix)
-    for centroid in centroid_list.centroids:
-        print(centroid) # change to not print uid
+    centroids = kmeans(k, iters, matrix)
+    for centroid in centroids:
+        print(centroid.center)
+
+if __name__ == "__main__":
+    main()
