@@ -14,10 +14,8 @@ class Vector:
         self.values = values
 
     def __repr__(self):
-        s = ''
-        for value in self.values:
-            s += str(round(value, 4)) + ", " # to check
-        return s
+        return ','.join([str(round(value, 4)) for value in self.values])
+
     def copy(self):
         copied_values = self.values.copy()
         return Vector(copied_values)
