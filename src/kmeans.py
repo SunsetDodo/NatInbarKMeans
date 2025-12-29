@@ -14,7 +14,7 @@ class Vector:
         self.values = values
 
     def __repr__(self):
-        return ','.join([str(round(value, 4)) for value in self.values])
+        return ','.join(f"{value:.4f}" for value in self.values)
 
     def copy(self):
         copied_values = self.values.copy()
