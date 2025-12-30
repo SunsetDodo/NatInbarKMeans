@@ -1,7 +1,7 @@
+#define _GNU_SOURCE
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
 
 const int INITIAL_ROW_CAP = 8;
 const char COL_DELIMITER = ',';
@@ -79,23 +79,6 @@ MemNode* mem_chain_malloc(MemChain* chain, const size_t size) {
 
     return node;
 }
-
-
-void* mem_chain_realloc(MemNode* node, size_t new_size) {
-    void* new_data;
-
-    if (!node) return NULL;
-
-    new_data = realloc(node->data, new_size);
-    if (!new_data) {
-        return node->data;
-    }
-
-    node->data = new_data;
-    return new_data;
-}
-
-
 void mem_chain_free(MemChain* chain) {
     MemNode* curr;
 
@@ -113,6 +96,36 @@ void mem_chain_free(MemChain* chain) {
 
     free(chain);
 }
+
+void validate_input(MemChain* chain, const Input d, const int k, const int max_iterations) {
+    if (!(1 < max_iterations && max_iterations < 800)) {
+        printf("Incorrect maximum iteration!");
+        mem_chain_free(chain);
+        exit(1);
+    }
+
+    if (!(1 < k && k < d.rows)) {
+        printf("Incorrect number of clusters!");
+        mem_chain_free(chain);
+        exit(1);
+    }
+}
+
+
+void* mem_chain_realloc(MemNode* node, const size_t new_size) {
+    void* new_data;
+
+    if (!node) return NULL;
+
+    new_data = realloc(node->data, new_size);
+    if (!new_data && new_size != 0) {
+        return NULL;
+    }
+
+    node->data = new_data;
+    return new_data;
+}
+
 
 void unlink_node(MemChain* chain, MemNode* node) {
     if (!chain || !node) return;
@@ -145,44 +158,58 @@ void unlink(MemChain* chain, void* ptr) {
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noreturn))
 #endif
-void free_and_exit(MemChain* chain, int code) {
+void free_and_exit(MemChain* chain, const int code) {
+    if (code) {
+        printf("An Error Has Occurred");
+    }
     mem_chain_free(chain);
     exit(code);
 }
 
 
-int parse_positive_int(const char* s) {
+double str_to_double(const char* s) {
     char* end;
-    long v;
+    double v;
 
     if (s == NULL || *s == '\0') {
-        exit(1);
+        return -1;
     }
 
-    v = strtol(s, &end, 10);
+    v = strtod(s, &end);
 
-    if (*end != '\0' || v <= 0) {
-        exit(1);
+    if (*end != '\0') {
+        return -1;
     }
 
-    return (int)v;
+    return v;
 }
 
 
-void parse_args_positional(int argc, char** argv, int* k, int* max_iterations) {
-    int max_iter = 400;
+void parse_args(const int argc, char** argv, int* k, int* max_iterations) {
+    double max_iter_raw = 400;
+    double k_raw;
 
     if (!(argc == 3 || argc == 2)) {
-        fprintf(stderr, "Usage: %s <k> [<max_iterations>]\n", argv[0]);
+        printf("An Error Has Occurred");
         exit(1);
     }
 
     if (argc == 3) {
-        max_iter = parse_positive_int(argv[2]);
+        max_iter_raw = str_to_double(argv[2]);
+        if (max_iter_raw != (int)max_iter_raw) {
+            printf("Incorrect maximum iteration!");
+            exit(1);
+        }
     }
 
-    *k = parse_positive_int(argv[1]);
-    *max_iterations = max_iter;
+    k_raw = str_to_double(argv[1]);
+    if (k_raw != (int)k_raw) {
+        printf("Incorrect number of clusters!");
+        exit(1);
+    }
+
+    *k = (int)k_raw;
+    *max_iterations = (int)max_iter_raw;
 }
 
 size_t str_len(const char* str) {
@@ -304,6 +331,11 @@ Input parse_input(MemChain* chain) {
     if (input.rows > 0) {
         input.matrix = mem_chain_realloc(matrix_node, input.rows * sizeof(double*));
         input.vector_nodes = mem_chain_realloc(vector_nodes_node, input.rows * sizeof(MemNode*));
+
+        if (input.matrix == NULL || input.vector_nodes == NULL) {
+            free(line);
+            free_and_exit(chain, 1);
+        }
     }
 
     return input;
@@ -432,6 +464,7 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
     for (i = 0; i < k; i++) {
         if (centroids[i].assigned_vectors_count > 0) {
             centroids[i].assigned_vectors = mem_chain_realloc(centroids[i].assigned_vectors_node, centroids[i].assigned_vectors_count * sizeof(double*));
+            if (!centroids[i].assigned_vectors) free_and_exit(chain, 1);
         } else {
             empty_idx = i;
         }
@@ -443,6 +476,9 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
         c->assigned_vectors_node = mem_chain_malloc(chain, sizeof(double*));
         if (!c->assigned_vectors_node) free_and_exit(chain, 1);
         c->assigned_vectors = c->assigned_vectors_node->data;
+    } else {
+        c->assigned_vectors = mem_chain_realloc(c->assigned_vectors_node, (c->assigned_vectors_count + 1) * sizeof(double*));
+        if (!c->assigned_vectors) free_and_exit(chain, 1);
     }
     c->assigned_vectors[c->assigned_vectors_count++] = input.matrix[0];
 }
@@ -465,7 +501,9 @@ MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_i
         centroids[i].center = center_node->data;
         centroids[i].center_node = center_node;
 
-        memcpy(centroids[i].center, input.matrix[i], input.cols * sizeof(double));
+        for (j = 0; j < input.cols; j++) {
+            centroids[i].center[j] = input.matrix[i][j];
+        }
 
         centroids[i].assigned_vectors_count = 0;
         centroids[i].assigned_vectors = NULL;
@@ -508,13 +546,12 @@ MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_i
 
         free_centroids(chain, centroids_node, k);
         centroids_node = new_centroids_node;
-        centroids = new_centroids;
     }
 
     return centroids_node;
 }
 
-int main(int argc, char** argv) {
+int main(const int argc, char** argv) {
     int k, max_iterations;
     int i, j;
     Input d;
@@ -522,11 +559,13 @@ int main(int argc, char** argv) {
     MemChain* chain;
     Centroid* centroids;
 
-    parse_args_positional(argc, argv, &k, &max_iterations);
+    parse_args(argc, argv, &k, &max_iterations);
 
     chain = mem_chain_init();
 
     d = parse_input(chain);
+
+    validate_input(chain, d, k, max_iterations);
 
     centroids_node = kmeans(chain, d, k, max_iterations);
     centroids = centroids_node->data;
