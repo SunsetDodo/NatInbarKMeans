@@ -1,6 +1,7 @@
+import argparse
 import sys
 
-from typing import List
+from typing import List, Tuple
 
 EPSILON = 0.001
 ITERATIONS = 400
@@ -157,14 +158,38 @@ def check_for_empty_centroid(centroids: List[Centroid]) -> Centroid or None: #ne
 
 
 def main():
-    k = int(sys.argv[1])
-    iters = 400
+    if len(sys.argv) not in [2, 3]:
+        print("An Error Has Occurred")
+        sys.exit(1)
+
+    k_raw = sys.argv[1]
+    if not k_raw.replace('.', '').isnumeric() or k_raw.count('.') > 1 or k_raw.endswith('.') or int(float(k_raw)) != float(k_raw):
+        print("Incorrect number of clusters!")
+        sys.exit(1)
+
+    k = int(float(k_raw))
+
+    max_iters = 400
     if len(sys.argv) == 3:
-        iters = int(sys.argv[2])
+        max_iters_raw = sys.argv[2]
+        if not max_iters_raw.replace('.', '').isnumeric() or max_iters_raw.count('.') > 1 or max_iters_raw.endswith('.') or int(float(max_iters_raw)) != float(max_iters_raw):
+            print("Incorrect maximum iteration!")
+            sys.exit(1)
+
+        max_iters = int(float(max_iters_raw))
+
+    if not (1 < max_iters < 800):
+        print("Incorrect maximum iteration!")
+        sys.exit(1)
 
     data = sys.stdin.read()
     matrix = parse_file(data)
-    centroids = kmeans(k, iters, matrix)
+
+    if not (1 < k < len(matrix)):
+        print("Incorrect number of clusters!")
+        sys.exit(1)
+
+    centroids = kmeans(k, max_iters, matrix)
     for centroid in centroids:
         print(centroid.center)
 
