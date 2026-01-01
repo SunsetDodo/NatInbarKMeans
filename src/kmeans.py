@@ -149,7 +149,7 @@ def minimal_distance(previous_centroids: List[Centroid], new_centroids: List[Cen
 
     return maximum
 
-def check_for_empty_centroid(centroids: List[Centroid]) -> Centroid or None: #need to check
+def check_for_empty_centroid(centroids: List[Centroid]) -> Centroid or None:
     for c in centroids:
         if len(c.vectors) == 0:
             return c
