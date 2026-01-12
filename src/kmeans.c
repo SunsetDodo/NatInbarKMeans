@@ -1,7 +1,10 @@
 #define _GNU_SOURCE
+#define PY_SSIZE_T_CLEAN
+
 #include <math.h>
-#include <stdlib.h>
+#include <Python.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 const int INITIAL_ROW_CAP = 8;
 const char COL_DELIMITER = ',';
@@ -36,7 +39,6 @@ typedef struct {
 
     int assigned_vectors_count;
 } Centroid;
-
 
 MemChain* mem_chain_init(void) {
     MemChain* chain;
@@ -140,20 +142,6 @@ void unlink_node(MemChain* chain, MemNode* node) {
     free(node);
 }
 
-void unlink(MemChain* chain, void* ptr) {
-    MemNode* curr;
-
-    if (!chain || !ptr) return;
-
-    curr = chain->head;
-    while (curr) {
-        if (curr->data == ptr) {
-            unlink_node(chain, curr);
-            return;
-        }
-        curr = curr->next;
-    }
-}
 
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noreturn))
@@ -273,6 +261,70 @@ MemNode* str_to_vector_node(MemChain* chain, const char* str, int* out_col_count
 
     return values_node;
 }
+
+static int py_list_to_matrix(
+    MemChain* chain,
+    PyObject* obj,
+    double*** out_mat,
+    int* out_rows,
+    int* out_cols
+) {
+    int rows, cols;
+    int i, j;
+    MemNode* mat_node;
+    MemNode* row_nodes_node;
+    double** mat;
+    MemNode** row_nodes;
+
+    if (!PyList_Check(obj)) return 0;
+
+    rows = (int)PyList_Size(obj);
+    if (rows <= 0) return 0;
+
+    PyObject* first_row = PyList_GetItem(obj, 0);
+    if (!PyList_Check(first_row)) return 0;
+
+    cols = (int)PyList_Size(first_row);
+    if (cols <= 0) return 0;
+
+    mat_node = mem_chain_malloc(chain, rows * sizeof(double*));
+    if (!mat_node) return 0;
+    mat = (double**)mat_node->data;
+
+    row_nodes_node = mem_chain_malloc(chain, rows * sizeof(MemNode*));
+    if (!row_nodes_node) return 0;
+    row_nodes = (MemNode**)row_nodes_node->data;
+
+    for (i = 0; i < rows; i++) {
+        PyObject* row;
+        double* vec;
+        row = PyList_GetItem(obj, i);
+        if (!PyList_Check(row) || (int)PyList_Size(row) != cols) return 0;
+
+        MemNode* vec_node = mem_chain_malloc(chain, cols * sizeof(double));
+        if (!vec_node) return 0;
+
+        vec = (double*)vec_node->data;
+
+        for (j = 0; j < cols; j++) {
+            PyObject* item;
+            double v;
+            item = PyList_GetItem(row, j);
+            v = PyFloat_AsDouble(item);
+            if (PyErr_Occurred()) return 0;
+            vec[j] = v;
+        }
+
+        row_nodes[i] = vec_node;
+        mat[i] = vec;
+    }
+
+    *out_mat = mat;
+    *out_rows = rows;
+    *out_cols = cols;
+    return 1;
+}
+
 
 Input parse_input(MemChain* chain) {
     size_t row_cap = INITIAL_ROW_CAP;
@@ -483,7 +535,7 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
     c->assigned_vectors[c->assigned_vectors_count++] = input.matrix[0];
 }
 
-MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_iterations) {
+MemNode* kmeans(MemChain* chain, const Input input, double** initial_centroids, const int k, const int max_iterations) {
     int i, j;
     MemNode* centroids_node;
     Centroid* centroids;
@@ -502,7 +554,7 @@ MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_i
         centroids[i].center_node = center_node;
 
         for (j = 0; j < input.cols; j++) {
-            centroids[i].center[j] = input.matrix[i][j];
+            centroids[i].center[j] = initial_centroids[i][j];
         }
 
         centroids[i].assigned_vectors_count = 0;
@@ -551,34 +603,125 @@ MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_i
     return centroids_node;
 }
 
-int main(const int argc, char** argv) {
+static PyObject* fit(PyObject* self, PyObject* args) {
+    PyObject *points_obj, *centroids_obj;
     int k, max_iterations;
-    int i, j;
+
+    MemChain* chain = NULL;
     Input d;
+    double** points = NULL;
+    double** init_centroids = NULL;
+    int n_rows, dim_points;
+    int k_rows, dim_centroids;
+
     MemNode* centroids_node;
-    MemChain* chain;
     Centroid* centroids;
 
-    parse_args(argc, argv, &k, &max_iterations);
-
-    chain = mem_chain_init();
-
-    d = parse_input(chain);
-
-    validate_input(chain, d, k, max_iterations);
-
-    centroids_node = kmeans(chain, d, k, max_iterations);
-    centroids = centroids_node->data;
-
-    if (!centroids_node) free_and_exit(chain, 1);
-
-    for (i = 0; i < k; i++) {
-        for (j = 0; j < d.cols; j++) {
-            printf("%.4f", centroids[i].center[j]);
-            if (j + 1 < d.cols) printf(",");
-        }
-        printf("\n");
+    if (!PyArg_ParseTuple(args, "OOii", &points_obj, &centroids_obj, &k, &max_iterations)) {
+        return NULL;
     }
 
-    free_and_exit(chain, 0);
+    chain = mem_chain_init();
+    if (!chain) {
+        PyErr_SetString(PyExc_RuntimeError, "Allocation failed");
+        return NULL;
+    }
+
+    if (!py_list_to_matrix(chain, points_obj, &points, &n_rows, &dim_points)) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Invalid points");
+        return NULL;
+    }
+
+    if (!py_list_to_matrix(chain, centroids_obj, &init_centroids, &k_rows, &dim_centroids)) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Invalid centroids");
+        return NULL;
+    }
+
+    if (k_rows != k) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "k does not match number of centroids");
+        return NULL;
+    }
+
+    if (dim_points != dim_centroids) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Points and centroids dimension mismatch");
+        return NULL;
+    }
+
+    if (!(1 < max_iterations && max_iterations < 800)) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Incorrect maximum iteration");
+        return NULL;
+    }
+
+    if (!(1 < k && k < n_rows)) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Incorrect number of clusters");
+        return NULL;
+    }
+
+    d.matrix = points;
+    d.rows = n_rows;
+    d.cols = dim_points;
+    d.vector_nodes = NULL;
+    d.matrix_head = NULL;
+
+    centroids_node = kmeans(chain, d, init_centroids, k, max_iterations);
+    if (!centroids_node) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_RuntimeError, "kmeans failed");
+        return NULL;
+    }
+
+    centroids = (Centroid*)centroids_node->data;
+
+    PyObject* out = PyList_New(k);
+    if (!out) {
+        mem_chain_free(chain);
+        return NULL;
+    }
+
+    for (int i = 0; i < k; i++) {
+        PyObject* row = PyList_New(d.cols);
+        if (!row) {
+            Py_DECREF(out);
+            mem_chain_free(chain);
+            return NULL;
+        }
+        for (int j = 0; j < d.cols; j++) {
+            PyObject* val = PyFloat_FromDouble(centroids[i].center[j]);
+            if (!val) {
+                Py_DECREF(row);
+                Py_DECREF(out);
+                mem_chain_free(chain);
+                return NULL;
+            }
+            PyList_SetItem(row, j, val);
+        }
+        PyList_SetItem(out, i, row);
+    }
+
+    mem_chain_free(chain);
+    return out;
+}
+
+
+static PyMethodDef Methods[] = {
+    {"fit", fit, METH_VARARGS, "Run kmeans and return centroids"},
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "mykmeanssp",
+    NULL,
+    -1,
+    Methods
+};
+
+PyMODINIT_FUNC PyInit_mykmeanssp(void) {
+    return PyModule_Create(&moduledef);
 }
