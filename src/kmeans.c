@@ -1,11 +1,11 @@
-#define _GNU_SOURCE
+#define PY_SSIZE_T_CLEAN
+
 #include <math.h>
+#include <Python.h>
 #include <stdlib.h>
-#include <stdio.h>
 
 const int INITIAL_ROW_CAP = 8;
 const char COL_DELIMITER = ',';
-const double EPSILON = 0.0001;
 
 typedef struct MemNode{
     void* data;
@@ -22,9 +22,6 @@ typedef struct {
     double** matrix;
     MemNode** vector_nodes;
     MemNode* matrix_head;
-
-    int rows;
-    int cols;
 } Input;
 
 typedef struct {
@@ -36,7 +33,6 @@ typedef struct {
 
     int assigned_vectors_count;
 } Centroid;
-
 
 MemChain* mem_chain_init(void) {
     MemChain* chain;
@@ -79,6 +75,7 @@ MemNode* mem_chain_malloc(MemChain* chain, const size_t size) {
 
     return node;
 }
+
 void mem_chain_free(MemChain* chain) {
     MemNode* curr;
 
@@ -96,21 +93,6 @@ void mem_chain_free(MemChain* chain) {
 
     free(chain);
 }
-
-void validate_input(MemChain* chain, const Input d, const int k, const int max_iterations) {
-    if (!(1 < max_iterations && max_iterations < 800)) {
-        printf("Incorrect maximum iteration!");
-        mem_chain_free(chain);
-        exit(1);
-    }
-
-    if (!(1 < k && k < d.rows)) {
-        printf("Incorrect number of clusters!");
-        mem_chain_free(chain);
-        exit(1);
-    }
-}
-
 
 void* mem_chain_realloc(MemNode* node, const size_t new_size) {
     void* new_data;
@@ -140,85 +122,6 @@ void unlink_node(MemChain* chain, MemNode* node) {
     free(node);
 }
 
-void unlink(MemChain* chain, void* ptr) {
-    MemNode* curr;
-
-    if (!chain || !ptr) return;
-
-    curr = chain->head;
-    while (curr) {
-        if (curr->data == ptr) {
-            unlink_node(chain, curr);
-            return;
-        }
-        curr = curr->next;
-    }
-}
-
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((noreturn))
-#endif
-void free_and_exit(MemChain* chain, const int code) {
-    if (code) {
-        printf("An Error Has Occurred");
-    }
-    mem_chain_free(chain);
-    exit(code);
-}
-
-
-double str_to_double(const char* s) {
-    char* end;
-    double v;
-
-    if (s == NULL || *s == '\0') {
-        return -1;
-    }
-
-    v = strtod(s, &end);
-
-    if (*end != '\0') {
-        return -1;
-    }
-
-    return v;
-}
-
-
-void parse_args(const int argc, char** argv, int* k, int* max_iterations) {
-    double max_iter_raw = 400;
-    double k_raw;
-
-    if (!(argc == 3 || argc == 2)) {
-        printf("An Error Has Occurred");
-        exit(1);
-    }
-
-    if (argc == 3) {
-        max_iter_raw = str_to_double(argv[2]);
-        if (max_iter_raw != (int)max_iter_raw) {
-            printf("Incorrect maximum iteration!");
-            exit(1);
-        }
-    }
-
-    k_raw = str_to_double(argv[1]);
-    if (k_raw != (int)k_raw) {
-        printf("Incorrect number of clusters!");
-        exit(1);
-    }
-
-    *k = (int)k_raw;
-    *max_iterations = (int)max_iter_raw;
-}
-
-size_t str_len(const char* str) {
-    size_t len = 0;
-    while (str[len] != '\0') len++;
-    return len;
-}
-
-
 double distance(const double* a, const double* b, int dim) {
     double sum = 0;
     int i;
@@ -232,113 +135,67 @@ double distance(const double* a, const double* b, int dim) {
     return sqrt(sum);
 }
 
+static int py_list_to_matrix(
+    MemChain* chain,
+    PyObject* obj,
+    double*** out_mat,
+    int* out_rows,
+    int* out_cols
+) {
+    int rows, cols;
+    int i, j;
+    MemNode* mat_node;
+    MemNode* row_nodes_node;
+    double** mat;
+    MemNode** row_nodes;
 
-MemNode* str_to_vector_node(MemChain* chain, const char* str, int* out_col_count) {
-    size_t len;
-    MemNode* values_node;
-    double* values;
-    int current_col;
-    const char* cursor;
-    char* pEnd;
+    if (!PyList_Check(obj)) return 0;
 
-    len = str_len(str);
+    rows = (int)PyList_Size(obj);
+    if (rows <= 0) return 0;
 
-    values_node = mem_chain_malloc(chain, len * sizeof(double));
-    if (!values_node) free_and_exit(chain, 1);
-    values = values_node->data;
+    PyObject* first_row = PyList_GetItem(obj, 0);
+    if (!PyList_Check(first_row)) return 0;
 
-    current_col = 0;
-    cursor = str;
-    pEnd = NULL;
+    cols = (int)PyList_Size(first_row);
+    if (cols <= 0) return 0;
 
-    while (1) {
-        double val;
+    mat_node = mem_chain_malloc(chain, rows * sizeof(double*));
+    if (!mat_node) return 0;
+    mat = (double**)mat_node->data;
 
-        val = strtod(cursor, &pEnd);
-        if (cursor == pEnd) {
-            break;
+    row_nodes_node = mem_chain_malloc(chain, rows * sizeof(MemNode*));
+    if (!row_nodes_node) return 0;
+    row_nodes = (MemNode**)row_nodes_node->data;
+
+    for (i = 0; i < rows; i++) {
+        PyObject* row;
+        double* vec;
+        row = PyList_GetItem(obj, i);
+        if (!PyList_Check(row) || (int)PyList_Size(row) != cols) return 0;
+
+        MemNode* vec_node = mem_chain_malloc(chain, cols * sizeof(double));
+        if (!vec_node) return 0;
+
+        vec = (double*)vec_node->data;
+
+        for (j = 0; j < cols; j++) {
+            PyObject* item;
+            double v;
+            item = PyList_GetItem(row, j);
+            v = PyFloat_AsDouble(item);
+            if (PyErr_Occurred()) return 0;
+            vec[j] = v;
         }
-        values[current_col++] = val;
-        cursor = pEnd;
-        if (*cursor == COL_DELIMITER) {
-            cursor++;
-        }
+
+        row_nodes[i] = vec_node;
+        mat[i] = vec;
     }
 
-    *out_col_count = current_col;
-
-    if (current_col > 0) {
-        mem_chain_realloc(values_node, current_col * sizeof(double));
-    }
-
-    return values_node;
-}
-
-Input parse_input(MemChain* chain) {
-    size_t row_cap = INITIAL_ROW_CAP;
-    Input input;
-    char* line;
-    int col_count;
-    size_t buffer_len;
-    MemNode* matrix_node;
-    MemNode* vector_nodes_node;
-
-
-    input.cols = 0;
-    input.rows = 0;
-
-    matrix_node = mem_chain_malloc(chain, row_cap * sizeof(double*));
-    if (!matrix_node) free_and_exit(chain, 1);
-    input.matrix = matrix_node->data;
-    input.matrix_head = matrix_node;
-
-    vector_nodes_node = mem_chain_malloc(chain, row_cap * sizeof(MemNode*));
-    if (!vector_nodes_node) free_and_exit(chain, 1);
-    input.vector_nodes = vector_nodes_node->data;
-
-    line = NULL;
-    buffer_len = 0;
-
-    while (getline(&line, &buffer_len, stdin) != -1) {
-        MemNode* row_node;
-
-        if (line[0] == '\n' || line[0] == '\r' || line[0] == '\0')
-            break;
-
-        col_count = 0;
-        row_node = str_to_vector_node(chain, line, &col_count);
-        if (input.cols == 0) {
-            input.cols = col_count;
-        }
-
-        input.vector_nodes[input.rows] = row_node;
-        input.matrix[input.rows++] = row_node->data;
-
-        if (input.rows == (int)row_cap) {
-            row_cap *= 2;
-
-            input.matrix = mem_chain_realloc(matrix_node, row_cap * sizeof(double*));
-            input.vector_nodes = mem_chain_realloc(vector_nodes_node, row_cap * sizeof(MemNode*));
-
-            if (input.matrix == NULL || input.vector_nodes == NULL) {
-                free(line);
-                free_and_exit(chain, 1);
-            }
-        }
-    }
-    free(line);
-
-    if (input.rows > 0) {
-        input.matrix = mem_chain_realloc(matrix_node, input.rows * sizeof(double*));
-        input.vector_nodes = mem_chain_realloc(vector_nodes_node, input.rows * sizeof(MemNode*));
-
-        if (input.matrix == NULL || input.vector_nodes == NULL) {
-            free(line);
-            free_and_exit(chain, 1);
-        }
-    }
-
-    return input;
+    *out_mat = mat;
+    *out_rows = rows;
+    *out_cols = cols;
+    return 1;
 }
 
 MemNode* mean_value(MemChain* chain, double** vectors, int vector_count, int vector_length) {
@@ -347,7 +204,7 @@ MemNode* mean_value(MemChain* chain, double** vectors, int vector_count, int vec
     int i, j;
 
     node = mem_chain_malloc(chain, vector_length * sizeof(double));
-    if (!node) free_and_exit(chain, 1);
+    if (!node) return NULL;
     mean = node->data;
 
     for (i = 0; i < vector_length; i++) {
@@ -405,14 +262,14 @@ double max_iteration_delta(const Centroid* old, const Centroid* newc,
     return max_delta;
 }
 
-void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, const Input input) {
+int assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, const int k, const Input input, int rows, int cols) {
     int i, j;
     int first_idx = -1;
     int empty_idx;
     Centroid* c;
 
     if (centroids == NULL || input.matrix == NULL) {
-        return;
+        return 0;
     }
 
     for (i = 0; i < k; i++) {
@@ -422,7 +279,7 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
         centroids[i].assigned_vectors_count = 0;
     }
 
-    for (i = 0; i < input.rows; i++) {
+    for (i = 0; i < rows; i++) {
         double min_distance;
         int best_idx;
 
@@ -432,7 +289,7 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
         for (j = 0; j < k; j++) {
             double dist;
 
-            dist = distance(input.matrix[i], centroids[j].center, input.cols);
+            dist = distance(input.matrix[i], centroids[j].center, cols);
             if (dist < min_distance) {
                 min_distance = dist;
                 best_idx = j;
@@ -440,7 +297,7 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
         }
 
         if (best_idx < 0) {
-            exit(1);
+            return 0;
         }
 
         if (i == 0) {
@@ -451,8 +308,8 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
         c = &centroids[best_idx];
 
         if (c->assigned_vectors_count == 0) {
-            c->assigned_vectors_node = mem_chain_malloc(chain, input.rows * sizeof(double*));
-            if (!c->assigned_vectors_node) free_and_exit(chain, 1);
+            c->assigned_vectors_node = mem_chain_malloc(chain, rows * sizeof(double*));
+            if (!c->assigned_vectors_node) return 0;
             c->assigned_vectors = c->assigned_vectors_node->data;
         }
 
@@ -464,7 +321,7 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
     for (i = 0; i < k; i++) {
         if (centroids[i].assigned_vectors_count > 0) {
             centroids[i].assigned_vectors = mem_chain_realloc(centroids[i].assigned_vectors_node, centroids[i].assigned_vectors_count * sizeof(double*));
-            if (!centroids[i].assigned_vectors) free_and_exit(chain, 1);
+            if (!centroids[i].assigned_vectors) return 0;
         } else {
             empty_idx = i;
         }
@@ -474,35 +331,36 @@ void assign_vectors_to_centroids(MemChain* chain, Centroid* centroids, int k, co
     c = &centroids[first_idx];
     if (c->assigned_vectors_count == 0) {
         c->assigned_vectors_node = mem_chain_malloc(chain, sizeof(double*));
-        if (!c->assigned_vectors_node) free_and_exit(chain, 1);
+        if (!c->assigned_vectors_node) return 0;
         c->assigned_vectors = c->assigned_vectors_node->data;
     } else {
         c->assigned_vectors = mem_chain_realloc(c->assigned_vectors_node, (c->assigned_vectors_count + 1) * sizeof(double*));
-        if (!c->assigned_vectors) free_and_exit(chain, 1);
+        if (!c->assigned_vectors) return 0;
     }
     c->assigned_vectors[c->assigned_vectors_count++] = input.matrix[0];
+    return 1;
 }
 
-MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_iterations) {
+MemNode* kmeans(MemChain* chain, const Input input, int rows, int cols, double** initial_centroids, const int k, const int max_iterations, const double epsilon) {
     int i, j;
     MemNode* centroids_node;
     Centroid* centroids;
 
     centroids_node = mem_chain_malloc(chain, k * sizeof(Centroid));
-    if (!centroids_node) free_and_exit(chain, 1);
+    if (!centroids_node) return NULL;
     centroids = centroids_node->data;
 
     for (i = 0; i < k; i++) {
         MemNode* center_node;
 
-        center_node = mem_chain_malloc(chain, input.cols * sizeof(double));
-        if (!center_node) free_and_exit(chain, 1);
+        center_node = mem_chain_malloc(chain, cols * sizeof(double));
+        if (!center_node) return NULL;
 
         centroids[i].center = center_node->data;
         centroids[i].center_node = center_node;
 
-        for (j = 0; j < input.cols; j++) {
-            centroids[i].center[j] = input.matrix[i][j];
+        for (j = 0; j < cols; j++) {
+            centroids[i].center[j] = initial_centroids[i][j];
         }
 
         centroids[i].assigned_vectors_count = 0;
@@ -510,7 +368,9 @@ MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_i
         centroids[i].assigned_vectors_node = NULL;
     }
 
-    assign_vectors_to_centroids(chain, centroids, k, input);
+    if (!assign_vectors_to_centroids(chain, centroids, k, input, rows, cols)) {
+        return NULL;
+    }
 
     for (i = 0; i < max_iterations; i++) {
         MemNode* new_centroids_node;
@@ -520,15 +380,15 @@ MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_i
         old_centroids = centroids_node->data;
 
         new_centroids_node = mem_chain_malloc(chain, k * sizeof(Centroid));
-        if (!new_centroids_node) free_and_exit(chain, 1);
+        if (!new_centroids_node) return NULL;
         new_centroids = new_centroids_node->data;
 
         for (j = 0; j < k; j++) {
             MemNode* mean_node;
 
-            mean_node = mean_value(chain, old_centroids[j].assigned_vectors, old_centroids[j].assigned_vectors_count, input.cols);
+            mean_node = mean_value(chain, old_centroids[j].assigned_vectors, old_centroids[j].assigned_vectors_count, cols);
+            if (!mean_node) return NULL;
 
-            new_centroids[j].center_node = mean_node;
             new_centroids[j].center_node = mean_node;
             new_centroids[j].center = (double*)mean_node->data;
 
@@ -537,9 +397,11 @@ MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_i
             new_centroids[j].assigned_vectors_count = 0;
         }
 
-        assign_vectors_to_centroids(chain, new_centroids, k, input);
+        if (!assign_vectors_to_centroids(chain, new_centroids, k, input, rows, cols)) {
+            return NULL;
+        }
 
-        if (max_iteration_delta(old_centroids, new_centroids, k, input.cols) < EPSILON) {
+        if (max_iteration_delta(old_centroids, new_centroids, k, cols) < epsilon) {
             free_centroids(chain, centroids_node, k);
             return new_centroids_node;
         }
@@ -551,34 +413,135 @@ MemNode* kmeans(MemChain* chain, const Input input, const int k, const int max_i
     return centroids_node;
 }
 
-int main(const int argc, char** argv) {
+static PyObject* fit(PyObject* self, PyObject* args) {
+    PyObject *points_obj, *centroids_obj;
     int k, max_iterations;
-    int i, j;
-    Input d;
+    double epsilon;
+
+    MemChain* chain = NULL;
+    Input d = {
+        .matrix = NULL,
+        .vector_nodes = NULL,
+        .matrix_head = NULL,
+    };
+    double** points = NULL;
+    double** init_centroids = NULL;
+    int n_rows, dim_points;
+    int k_rows, dim_centroids;
+
     MemNode* centroids_node;
-    MemChain* chain;
     Centroid* centroids;
 
-    parse_args(argc, argv, &k, &max_iterations);
-
-    chain = mem_chain_init();
-
-    d = parse_input(chain);
-
-    validate_input(chain, d, k, max_iterations);
-
-    centroids_node = kmeans(chain, d, k, max_iterations);
-    centroids = centroids_node->data;
-
-    if (!centroids_node) free_and_exit(chain, 1);
-
-    for (i = 0; i < k; i++) {
-        for (j = 0; j < d.cols; j++) {
-            printf("%.4f", centroids[i].center[j]);
-            if (j + 1 < d.cols) printf(",");
-        }
-        printf("\n");
+    if (!PyArg_ParseTuple(args, "OOiid", &points_obj, &centroids_obj, &k, &max_iterations, &epsilon)) {
+        return NULL;
     }
 
-    free_and_exit(chain, 0);
+    chain = mem_chain_init();
+    if (!chain) {
+        PyErr_SetString(PyExc_RuntimeError, "An Error Has Occurred");
+        return NULL;
+    }
+
+    if (!py_list_to_matrix(chain, points_obj, &points, &n_rows, &dim_points)) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Invalid points");
+        return NULL;
+    }
+
+    if (!py_list_to_matrix(chain, centroids_obj, &init_centroids, &k_rows, &dim_centroids)) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Invalid centroids");
+        return NULL;
+    }
+
+    if (k_rows != k) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "k does not match number of centroids");
+        return NULL;
+    }
+
+    if (dim_points != dim_centroids) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Points and centroids dimension mismatch");
+        return NULL;
+    }
+
+    if (!(1 < max_iterations && max_iterations < 800)) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Incorrect maximum iteration");
+        return NULL;
+    }
+
+    if (!(1 < k && k < n_rows)) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_ValueError, "Incorrect number of clusters");
+        return NULL;
+    }
+
+    d.matrix = points;
+    d.vector_nodes = NULL;
+    d.matrix_head = NULL;
+
+    centroids_node = kmeans(chain, d, n_rows, dim_points, init_centroids, k, max_iterations, epsilon);
+    if (!centroids_node) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_RuntimeError, "An Error Has Occurred");
+        return NULL;
+    }
+    centroids = (Centroid*)centroids_node->data;
+
+    PyObject* out = PyList_New(k);
+    if (!out) {
+        mem_chain_free(chain);
+        PyErr_SetString(PyExc_RuntimeError, "An Error Has Occurred");
+        return NULL;
+    }
+
+    for (int i = 0; i < k; i++) {
+        PyObject* row = PyList_New(dim_points);
+        if (!row) {
+            Py_DECREF(out);
+            mem_chain_free(chain);
+            PyErr_SetString(PyExc_RuntimeError, "An Error Has Occurred");
+            return NULL;
+        }
+        for (int j = 0; j < dim_points; j++) {
+            PyObject* val = PyFloat_FromDouble(centroids[i].center[j]);
+            if (!val) {
+                Py_DECREF(row);
+                Py_DECREF(out);
+                mem_chain_free(chain);
+                PyErr_SetString(PyExc_RuntimeError, "An Error Has Occurred");
+                return NULL;
+            }
+            PyList_SetItem(row, j, val);
+        }
+        PyList_SetItem(out, i, row);
+    }
+
+    mem_chain_free(chain);
+    return out;
+}
+
+
+static PyMethodDef fitMethods[] = {
+    {"fit",
+        fit,
+        METH_VARARGS,
+        PyDoc_STR("fit(vectors: list[list[float]], centroids: list[list[float]], k: int, max_iterations: int, epsilon: float) -> list[list[float]]"
+                  "\n\nRuns k-means algorithm with a given initial centroids.")
+    },
+    {NULL, NULL, 0, NULL}
+};
+
+static struct PyModuleDef moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "mykmeanssp",
+    NULL,
+    -1,
+    fitMethods
+};
+
+PyMODINIT_FUNC PyInit_mykmeanssp(void) {
+    return PyModule_Create(&moduledef);
 }
