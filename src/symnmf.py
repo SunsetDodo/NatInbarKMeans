@@ -12,9 +12,9 @@ def sym():
     pass
 def symnmf(matrix):
     pass
-def ddg():
+def ddg(matrix):
     pass
-def norm():
+def norm(matrix):
     pass
 def parse_inputs(file1) -> np.ndarray:
     try:
